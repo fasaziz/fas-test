@@ -1,0 +1,24 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations: 
+    cert-manager.io/cluster-issuer: letsencrypt-ontap-io
+  name: kierantest-ingress  
+spec:
+  ingressClassName: nginx-int
+  tls:
+  - hosts:
+    - kierantest.uk.int.k8s.ontap.io
+    secretName: kierantest-tls
+  rules:
+  - host: kierantest.uk.int.k8s.ontap.io
+    http:
+      paths: 
+        - path: /
+          pathType: Prefix
+          backend:
+            service:              
+              name: kierantest-service
+              port: 
+                number: 80 
