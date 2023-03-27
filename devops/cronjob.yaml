@@ -1,0 +1,94 @@
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: kierantest
+  name: appsettings-manager
+rules:
+- apiGroups: [""]
+  resources:
+  - secrets
+  - serviceaccounts
+  - serviceaccounts/token
+  verbs:
+  - 'delete'
+  - 'get'
+
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1beta1
+metadata:
+  name: appsettings-manager
+  namespace: kierantest
+subjects:
+- kind: ServiceAccount
+  name: sa-appsettings-manager
+  namespace: kierantest
+roleRef:
+  kind: Role
+  name: appsettings-manager
+  apiGroup: ""
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sa-appsettings-manager
+  namespace: kierantest
+
+---
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  annotations:
+  name: appsettings-manager
+  namespace: kierantest
+spec:
+  concurrencyPolicy: Allow
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+    spec:
+      template:
+        metadata:
+          creationTimestamp: null
+        spec:
+          serviceAccountName: sa-appsettings-manager
+          containers:
+          - command:
+            - /bin/bash
+            - -c
+            - |-
+              NAMESPACE=$(NAMESPACE)
+              SECRET_COUNT=$(SECRET_COUNT)
+              echo "Namespace: $NAMESPACE"
+              echo "Secret count: $SECRET_COUNT"
+              app_secrets=()
+              for secret in $(kubectl get secrets -n $NAMESPACE -o custom-columns=":metadata.name" --no-headers --sort-by=.metadata.creationTimestamp | grep -v token | grep appsettings); do
+                      app_secrets+=("$secret")
+              done
+              TOTAL_APPSECRETS=${#app_secrets[@]}
+
+              if [ "$TOTAL_APPSECRETS" -gt "$SECRET_COUNT" ]; then
+                      DELETE_SECRETS_COUNT=$(("TOTAL_APPSECRETS"-"$SECRET_COUNT"))
+                      echo "More than $SECRET_COUNT secrets found, need to delete $DELETE_SECRETS_COUNT"
+                      for (( c=1; c<=$DELETE_SECRETS_COUNT; c++ )); do
+                              echo "Attempting to delete" ${app_secrets["$c"-1]}
+                              kubectl delete secret ${app_secrets["$c"-1]} -n $NAMESPACE
+                      done
+              else
+                      echo "No need to delete any secrets"
+              fi
+            env:
+            - name: NAMESPACE
+              value: kierantest
+            - name: SECRET_COUNT
+              value: '10'
+            image: bitnami/kubectl:latest
+            imagePullPolicy: IfNotPresent
+            name: appsettings-manager
+          schedulerName: default-scheduler
+          restartPolicy: OnFailure
+  schedule: '0 0 * * SAT' # Run every Saturday # '*/5 * * * *' Every 5 minutes
+  successfulJobsHistoryLimit: 1
+  suspend: false
