@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>fastest</id>
+    <title>fastest</title>
+    <version>1.0.0</version>
+    <description>fastest</description>
+    <authors>fas a</authors>
+  </metadata>
+  <files>
+    <file src="**\*.json" target="fastest" />
+  </files>
+</package>
