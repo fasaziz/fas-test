@@ -1,4 +1,4 @@
-name: $(BuildDefinitionName)_1.0$(Rev:.r)
+name: $(Build.DefinitionName).1.0$(Rev:.r)
 
 trigger:
   branches:
@@ -10,14 +10,58 @@ pr:
     include:
       - master
 
-pool: Default
+pool: Docker
 
-stages :   
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: CapitalOnTap/ADO-Deploy-Tools
+
+stages :
+  - stage: Build_Docker
+    jobs:
+    - deployment: docker_build_deploy
+      continueOnError: false
+      environment: ci_build
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - checkout: self
+              - task: PowerShell@2
+                displayName: Split_Build_Number
+                continueOnError: false
+                inputs:
+                  targetType: inline
+                  script: | 
+                    $build = "$(Build.BuildNumber)"
+                    $pos = $build.IndexOf(".")
+                    $buildnumber = $build.Substring($pos+1)
+                    echo "##vso[task.setvariable variable=buildnumber]$buildnumber"
+              - task: Docker@2
+                displayName: Login to ACR
+                inputs:
+                  command: login
+                  containerRegistry: ACR Capitalontappg
+              - task: Docker@2
+                displayName: BuildPush
+                inputs:
+                  command: buildAndPush
+                  Dockerfile: ./dockerfile
+                  repository: kierantest
+                  tags: $(buildnumber)
+              - task: Docker@2
+                displayName: Logout of ACR
+                inputs:
+                  command: logout
+                  containerRegistry: ACR Capitalontappg
+
   - stage: App_Settings
     jobs:
     - job: App_settings
       variables:
-        - group: Application Vault UK Development
+        - group: System Variables
         - name: ProjectName
           value: kierantest 
       steps:
@@ -25,215 +69,62 @@ stages :
               clean: true
               submodules: true
             - task: PowerShell@2
+              displayName: Split_Build_Number
+              continueOnError: false
+              inputs:
+                targetType: inline
+                script: | 
+                  $build = "$(Build.BuildNumber)"
+                  $pos = $build.IndexOf(".")
+                  $buildnumber = $build.Substring($pos+1)
+                  echo "##vso[task.setvariable variable=buildnumber]$buildnumber"
+            - task: PowerShell@2
               displayName: Information
               continueOnError: false
               inputs:
                 targetType: inline
                 script: |
                   Write-host "Directory: $pwd"
+                  Write-host "Build Number: $(Build.BuildNumber)"
+                  echo "$(buildnumber)"
             - task: PowerShell@2
               displayName: Find_App_Settings
               continueOnError: false
               inputs:
                 targetType: inline
                 script: if ("appsettings.json" -in (Get-ChildItem).name) {Write-host "found appsettings file!"} else {write-error "Can't find the appsettings file..."}
-            - task: NuGetCommand@2
-              displayName: 'nuget pack'
+            - task: replacetokens@3
               inputs:
-                command: pack
-                packagesToPack: '**/*.nuspec'
-                versioningScheme: byBuildNumber
-            - task: NuGetCommand@2
-              displayName: 'nuget push'
+                targetFiles: '**/deployment.yaml'
+                encoding: 'auto'
+                writeBOM: true
+                actionOnMissing: 'warn'
+                keepToken: false
+                tokenPrefix: '${'
+                tokenSuffix: '}'
+                useLegacyPattern: false
+                enableTransforms: false
+                enableTelemetry: true
+            - task: ArchiveFiles@2
+              displayName: Zip_Files
               inputs:
-                command: 'push'
-                packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-                nuGetFeedType: 'internal'
-                publishVstsFeed: zip_applications
-            # - task: ArchiveFiles@2
-            #   displayName: Zip_Files
-            #   inputs:
-            #     rootFolderOrFile: '$(System.DefaultWorkingDirectory)' 
-            #     includeRootFolder: true 
-            #     archiveType: 'zip' # Options: zip, 7z, tar, wim
-            #     archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip' 
-            #     replaceExistingArchive: true 
-            # - task: AzurePowerShell@5
-            #   displayName: Upload_Package
-            #   inputs:
-            #     azureSubscription: CI Subscription
-            #     scriptType: inlineScript
-            #     inline: |
-            #       az artifacts universal publish --organization https://tfs.capitalontap.com/DefaultCollection/ --feed zip_applications --name $(ProjectName) --version 1.0$(Rev:.r) --description "" --path $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
-            #     errorActionPreference: 'stop'
-            #     azurePowerShellVersion: latestVersion
-            #     pwsh: true
-
-            # - task: replacetokens@3
-            #   displayName: Find_And_Replace
-            #   inputs:
-            #       targetFiles: '**/appsettings.json'
-            #       encoding: 'auto'
-            #       writeBOM: true
-            #       actionOnMissing: 'warn'
-            #       keepToken: false
-            #       tokenPrefix: '${'
-            #       tokenSuffix: '}'
-            #       useLegacyPattern: false
-            #       enableTransforms: false
-            #       enableTelemetry: true
-            # - task: PowerShell@2
-            #   displayName: Read_File
-            #   inputs:
-            #     targetType: inline
-            #     script: cat appsettings.json
-            #     errorActionPreference: stop
-            # - task: AzurePowerShell@5
-            #   displayName: Install_AKS_CLI
-            #   inputs:
-            #     azureSubscription: CI Subscription
-            #     scriptType: inlineScript
-            #     inline: |
-            #       az aks install-cli
-            #       $user = (whoami).split("\")[1]
-            #       if ($env:path -match "C:\\Users\\$user\\.azure-kubectl") {exit 0} else {$env:path += 'C:\Users\$user\.azure-kubectl'}
-            #     errorActionPreference: 'stop'
-            #     azurePowerShellVersion: latestVersion
-            #     pwsh: true
-            # - task: AzurePowerShell@5
-            #   displayName: Check_For_Namespace
-            #   inputs:
-            #     azureSubscription: CI Subscription
-            #     scriptType: inlineScript
-            #     inline: | 
-            #       az aks get-credentials --resource-group cot-k8s-playground --name cot-k8s-playgound --file ~/.kube/config
-            #       $namespace_name = "$(ProjectName)"
-            #       $exists = $false
-            #       $namespace = (kubectl get namespace) 
-            #       $count = $namespace.count
-            #       foreach ($c in 0..$count) {
-            #           $line = $namespace[$c]
-            #           Write-Host "checking line $c"
-            #           Write-Verbose "checking $line"
-            #           if ($line -match $namespace_name) {
-            #               Write-verbose "Found $namespace_name in $line"
-            #               $exists = $true 
-            #               break      
-            #           }
-            #           else {
-            #               Write-verbose "didn't find $namespace_name in $line"
-            #               $exists = $false
-            #           }
-            #       }
-            #       if ($exists -eq $true) {
-            #           Write-Host "Found $namespace_name"
-            #           $found = "true"
-            #       }
-            #       else {
-            #           write-host "Didn't find $namespace_name"
-            #           $found = "false"
-            #       }
-            #       Write-host ##vso[task.setvariable variable=namespaceExists]$found
-            # # - task: AzurePowerShell@5
-            # #   displayName: Check_For_Namespace
-            # #   inputs:
-            # #     azureSubscription: CI Subscription
-            # #     scriptType: inlineScript
-            # #     inline: | 
-            # #       $namespace_name = "$(ProjectName)"
-            # #       $exists = $false
-            # #       $namespace = az aks command invoke --command "kubectl get namespace" --resource-group cot-k8s-playground --name cot-k8s-playground
-            # #       $count = $namespace.count
-            # #       foreach ($c in 0..$count) {
-            # #           $line = $namespace[$c]
-            # #           Write-Host "checking line $c"
-            # #           Write-Verbose "checking $line"
-            # #           if ($line -match $namespace_name) {
-            # #               Write-verbose "Found $namespace_name in $line"
-            # #               $exists = $true 
-            # #               break      
-            # #           }
-            # #           else {
-            # #               Write-verbose "didn't find $namespace_name in $line"
-            # #               $exists = $false
-            # #           }
-            # #       }
-            # #       if ($exists -eq $true) {
-            # #           Write-Host "Found $namespace_name"
-            # #           $found = "true"
-            # #       }
-            # #       else {
-            # #           write-host "Didn't find $namespace_name"
-            # #           $found = "false"
-            # #       }
-            # #       Write-host ##vso[task.setvariable variable=namespaceExists]$found
-            #     errorActionPreference: 'stop'
-            #     azurePowerShellVersion: latestVersion
-            #     pwsh: true
-            # - task: Kubernetes@1
-            #   displayName: Create_Namespace
-            #   continueOnError: True #condition to only run if namespace doesn't exist
-            #   condition: eq(variables.namespaceExists, 'false')
-            #   inputs:
-            #     connectionType: Azure Resource Manager
-            #     azureSubscriptionEndpoint: CI Subscription
-            #     azureResourceGroup: cot-k8s-playground
-            #     kubernetesCluster: cot-k8s-playground
-            #     command: create
-            #     arguments: namespace $(ProjectName)
-            # - task: AzurePowerShell@5
-            #   displayName: Check_For_Appsettings
-            #   inputs:
-            #     azureSubscription: CI Subscription
-            #     scriptType: inlineScript
-            #     inline: |
-            #       $namespace_name = "kierantest"
-            #       $namespace_secrets = az aks command invoke --command "kubectl get secrets --namespace $namespace_name" --resource-group cot-k8s-playground --name cot-k8s-playground
-            #       $count = $namespace_secrets.count
-            #       $secret_name = "appsettings"
-            #       foreach ($c in 0..$count) {
-            #           $line = $namespace_secrets[$c]
-            #           Write-Host "checking line $c"
-            #           Write-Verbose "checking $line"
-            #           if ($line -match $secret_name) {
-            #               Write-verbose "Found $secret_name in $line"
-            #               $exists = $true 
-            #               break      
-            #           }
-            #           else {
-            #               Write-verbose "didn't find $namespace_name in $line"
-            #               $exists = $false
-            #           }
-            #       }
-            #       if ($exists -eq $true) {
-            #           Write-Host "Found $secret_name"
-            #           $found = "true"
-            #       }
-            #       else {
-            #           write-host "Didn't find $secret_name"
-            #           $found = "false"
-            #       }
-            #       Write-host ##vso[task.setvariable variable=appsettingsExists]$found
-            #     errorActionPreference: 'stop'
-            #     azurePowerShellVersion: latestVersion
-            #     pwsh: true
-            # - task: Kubernetes@1
-            #   displayName: Delete_Existing_Appsettings
-            #   continueOnError: True #condition to only run if appsettings exist, maybe some validation around if the appsettings file is different. Have a step that checks if it's present, set a variable on that and match the condiiton. 
-            #   condition: eq(variables.appsettingsExists, 'true')
-            #   inputs:
-            #     connectionType: Azure Resource Manager
-            #     azureSubscriptionEndpoint: CI Subscription
-            #     azureResourceGroup: cot-k8s-playground
-            #     kubernetesCluster: cot-k8s-playground
-            #     command: delete
-            #     arguments: secret appsettings --namespace="$(ProjectName)"
-            # - task: Kubernetes@1
-            #   displayName: Upload_Appsettings
-            #   inputs:
-            #     connectionType: Azure Resource Manager
-            #     azureSubscriptionEndpoint: CI Subscription
-            #     azureResourceGroup: cot-k8s-playground
-            #     kubernetesCluster: cot-k8s-playground
-            #     command: create
-            #     arguments: secret generic appsettings --from-file=appsettings.json=appsettings.json --namespace="$(ProjectName)"
+                rootFolderOrFile: '$(System.DefaultWorkingDirectory)' 
+                includeRootFolder: false 
+                archiveType: 'zip' # Options: zip, 7z, tar, wim
+                archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildNumber).zip' 
+                replaceExistingArchive: true 
+            - task: PowerShell@2
+              displayName: Download_Octo_CLI
+              continueOnError: false
+              inputs:
+                targetType: inline
+                script: |
+                  mkdir octo
+                  Invoke-WebRequest https://download.octopusdeploy.com/octopus-tools/7.4.3459/OctopusTools.7.4.3459.win-x64.zip -OutFile .\octo\octo.zip
+                  Expand-Archive -LiteralPath '.\octo\octo.zip' -DestinationPath .\octo\
+            - task: PowerShell@2
+              displayName: Push_Zip
+              continueOnError: false
+              inputs:
+                targetType: inline
+                script: .\octo\octo.exe push --package $(Build.ArtifactStagingDirectory)/$(Build.BuildNumber).zip --server https://octopus.capitalontap.com --apiKey $(octopus-api-key)
