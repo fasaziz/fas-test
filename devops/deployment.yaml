@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kierantest
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      k8s-app: kierantest
+  template:
+    metadata:
+      labels:
+        k8s-app: kierantest
+      name: kierantest
+    spec:
+      volumes:
+      - name: appsettings-volume
+        secret:
+          secretName: appsettings-#{OctopusParameters["Octopus.Release.Number"]}
+      containers:
+      - name: kierantest
+        image: capitalontappg.azurecr.io/kierantest:${buildnumber}
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "500Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        volumeMounts:
+        - name: appsettings-volume
+          mountPath: /app/appsettings.json
+          subPath: appsettings.json
+          readOnly: true
+      restartPolicy: Always
